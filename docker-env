@@ -1,0 +1,161 @@
+#!/bin/bash
+
+# DEFAULT VALUES
+BASE_IMAGE=debian:stable-slim
+DOCKER_PASSWORD="docker"
+DOCKER_HOST="docker-host"
+MOUNT_HOME=0
+
+# USER INFO
+DOCKER_USERNAME=`id -u -n`
+DOCKER_UID=`id -u`
+DOCKER_GROUP=`id -g -n`
+DOCKER_GID=`id -g`
+DOCKER_HOME="/home/$DOCKER_USERNAME"
+
+# PARSE ARGUMENTS
+POSITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -i|--base-image)
+      BASE_IMAGE="$2"
+      shift
+      shift
+      ;;
+    -p|--password)
+      DOCKER_PASSWORD="$2"
+      shift
+      shift
+      ;;
+    -h|--host)
+      DOCKER_HOST="$2"
+      shift
+      shift
+      ;;
+	-m|--mount-home)
+	  MOUNT_HOME=1
+	  shift  
+	  ;;
+    -*|--*)
+      echo "Unknown option $1"
+      exit 1
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1") # save positional arg
+      shift # past argument
+      ;;
+  esac
+done
+
+set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+
+COMMAND=$1
+IMAGE_NAME=$2
+CONTAINER_NAME="env-$IMAGE_NAME"
+
+
+function usage {
+	cat <<-EOF		
+			Usage: $0 command [options] name
+
+			Commands:
+			 create      Create the docker image
+			 enter       Run the docker container and opens a shell
+			 remove      Delete the docker container and image
+
+			Options:
+			 create 
+			  -i, --base-image  IMAGE   Set the base docker image to use to build the image, default 'debian:stable-slim'
+			  -p, --password PASS       Set the root password, default 'docker'
+			 enter 
+			  -h, --host HOST           Set the host name, default 'docker-host'
+			  -m, --mount-home          Mount the real home folder to the environment home folder
+
+			Other:	
+			 The current folder is always mounted in /project	
+	EOF
+}
+
+function docker_create {
+	echo "Building docker image $IMAGE_NAME"
+
+	docker build -t $IMAGE_NAME - <<-DOCKERFILE_EOF
+		FROM $BASE_IMAGE
+
+		RUN apt-get update -y
+		RUN apt-get upgrade -y
+		RUN apt-get install sudo -y
+
+		RUN mkdir -p /opt/
+		RUN groupadd -f -g $DOCKER_GID $DOCKER_GROUP
+		RUN useradd -u $DOCKER_UID -s /bin/bash -c $DOCKER_USERNAME -g $DOCKER_GID -m -d $DOCKER_HOME $DOCKER_USERNAME
+		RUN usermod -a -G sudo $DOCKER_USERNAME
+		RUN echo $DOCKER_USERNAME:$DOCKER_PASSWORD | chpasswd
+	DOCKERFILE_EOF
+
+}
+
+
+function docker_enter {
+	volumes=()
+
+	# always mount local directory to /project
+	DOCKER_PWD="/project"
+	volumes+=(-v "$PWD:/project")
+
+	# mount local home to container home
+	if [[ $MOUNT_HOME == 1 ]]; then
+		volumes+=(-v "$HOME:$DOCKER_HOME")
+		# remap local home root to container home root
+		DOCKER_PWD=`echo "$PWD" | sed -r "s#^$HOME#$DOCKER_HOME#g"`
+	fi
+	
+	docker run -h "$DOCKER_HOST" \
+			"${volumes[@]}" \
+			-e DOCKER_USERNAME="$DOCKER_USERNAME" \
+			-e DOCKER_PWD="$DOCKER_PWD" \
+			--name "$CONTAINER_NAME" \
+			-ti \
+			"$IMAGE_NAME" \
+			/bin/bash -c 'cd $DOCKER_PWD; su $DOCKER_USERNAME' 
+	echo "stopping $CONTAINER_NAME"
+	docker stop $CONTAINER_NAME >/dev/null
+	echo "committing $CONTAINER_NAME" 
+	docker commit $CONTAINER_NAME $IMAGE_NAME >/dev/null
+	echo "removing $CONTAINER_NAME"
+	docker container rm $CONTAINER_NAME >/dev/null
+}
+
+function docker_remove {
+	echo "stopping container $CONTAINER_NAME"
+	docker stop $CONTAINER_NAME >/dev/null
+	echo "removing container $CONTAINER_NAME"
+	docker container rm $CONTAINER_NAME >/dev/null
+	echo "removing image $IMAGE_NAME"
+	docker image rm $IMAGE_NAME >dev/null
+}
+
+
+if [ -z $IMAGE_NAME ]; then
+	usage
+	exit -1
+fi
+
+case "$COMMAND" in
+	create)
+		docker_create
+		;;
+
+	enter)
+		docker_enter
+		;;
+
+	remove)
+	    docker_remove
+		;;
+
+	*)
+		usage
+		;;
+esac
