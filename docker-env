@@ -6,7 +6,7 @@ DOCKER_PASSWORD="docker"
 DOCKER_HOST="docker-host"
 MOUNT_HOME=0
 
-# USER INFO
+# USER INFO
 DOCKER_USERNAME=`id -u -n`
 DOCKER_UID=`id -u`
 DOCKER_GROUP=`id -g -n`
@@ -129,11 +129,11 @@ function docker_enter {
 
 function docker_remove {
 	echo "stopping container $CONTAINER_NAME"
-	docker stop $CONTAINER_NAME >/dev/null
+	docker stop $CONTAINER_NAME > /dev/null
 	echo "removing container $CONTAINER_NAME"
-	docker container rm $CONTAINER_NAME >/dev/null
+	docker container rm $CONTAINER_NAME > /dev/null
 	echo "removing image $IMAGE_NAME"
-	docker image rm $IMAGE_NAME >dev/null
+	docker image rm $IMAGE_NAME > /dev/null
 }
 
 
